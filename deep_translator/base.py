@@ -13,17 +13,16 @@ from deep_translator.exceptions import (
 )
 
 
-class BaseTranslator(ABC):
+class BaseTranslator( ABC ):
     """
-    Abstract class that serve as a base translator for other different translators
-    """
+        Abstract class that serve as a base translator for other different translators
+        """
 
-    def __init__(
-        self,
+    def __init__( self,
         base_url: str = None,
         languages: dict = GOOGLE_LANGUAGES_TO_CODES,
         source: str = "auto",
-        target: str = "en",
+        target: str = "ko",
         payload_key: Optional[str] = None,
         element_tag: Optional[str] = None,
         element_query: Optional[dict] = None,
@@ -118,15 +117,15 @@ class BaseTranslator(ABC):
             return False
 
     @abstractmethod
-    def translate(self, text: str, **kwargs) -> str:
+    def translate( self, text: str, **kwargs ) -> str:
         """
-        translate a text using a translator under the hood and return
-        the translated text
-        @param text: text to translate
-        @param kwargs: additional arguments
-        @return: str
-        """
-        return NotImplemented("You need to implement the translate method!")
+            translate a text using a translator under the hood and return
+            the translated text
+            @param text: text to translate
+            @param kwargs: additional arguments
+            @return: str
+            """
+        return NotImplemented( "You need to implement the translate method!" )
 
     def _read_docx(self, f: str):
         import docx2txt
@@ -140,16 +139,16 @@ class BaseTranslator(ABC):
         page = reader.pages[0]
         return page.extract_text()
 
-    def _translate_file(self, path: str, **kwargs) -> str:
+    def _translate_file( self, path: str, **kwargs ) -> str:
         """
-        translate directly from file
-        @param path: path to the target file
-        @type path: str
-        @param kwargs: additional args
-        @return: str
-        """
-        if not isinstance(path, Path):
-            path = Path(path)
+            translate directly from file
+            @param path: path to the target file
+            @type path: str
+            @param kwargs: additional args
+            @return: str
+            """
+        if not isinstance( path, Path ):
+            path = Path( path )
 
         if not path.exists():
             print("Path to the file is wrong!")
@@ -158,26 +157,26 @@ class BaseTranslator(ABC):
         ext = path.suffix
 
         if ext == ".docx":
-            text = self._read_docx(f=str(path))
+            text = self._read_docx( f=str(path) )
 
         elif ext == ".pdf":
-            text = self._read_pdf(f=str(path))
+            text = self._read_pdf( f=str(path) )
         else:
-            with open(path, "r", encoding="utf-8") as f:
+            with open( path, "r", encoding="utf-8" ) as f:
                 text = f.read().strip()
 
-        return self.translate(text)
+        return self.translate( text )
 
-    def _translate_batch(self, batch: List[str], **kwargs) -> List[str]:
+    def _translate_batch( self, batch: List[str], **kwargs ) -> List[str]:
         """
-        translate a list of texts
-        @param batch: list of texts you want to translate
-        @return: list of translations
-        """
+            translate a list of texts
+            @param batch: list of texts you want to translate
+            @return: list of translations
+            """
         if not batch:
-            raise Exception("Enter your text list that you want to translate")
+            raise Exception( "Enter your text list that you want to translate" )
         arr = []
-        for i, text in enumerate(batch):
-            translated = self.translate(text, **kwargs)
-            arr.append(translated)
+        for i, text in enumerate( batch ):
+            translated = self.translate( text, **kwargs )
+            arr.append( translated )
         return arr

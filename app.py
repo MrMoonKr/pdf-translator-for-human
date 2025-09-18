@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 import streamlit as st
 import pymupdf
+from pymupdf import Document, Page, Pixmap
 from deep_translator import (
     GoogleTranslator,
 )
@@ -14,7 +15,7 @@ import argparse
 # Constants
 DEFAULT_PAGES_PER_LOAD = 2
 DEFAULT_MODEL = "default_model"
-DEFAULT_API_BASE = "http://localhost:8080/v1"
+DEFAULT_API_BASE = "http://localhost:1234/v1"
 
 # Supported translators
 TRANSLATORS = {
@@ -31,6 +32,7 @@ COLOR_MAP = {
     "darkgreen": (0, 0.5, 0),
     "purple": (0.5, 0, 0.5),
 }
+'''색상 룩업테이블'''
 
 # Target language options for ChatGPT
 LANGUAGE_OPTIONS = {
@@ -43,6 +45,7 @@ LANGUAGE_OPTIONS = {
     "Français": "fr",
     "Deutsch": "de",
 }
+'''타겟 언어 룩업테이블'''
 
 # Add source language options
 SOURCE_LANGUAGE_OPTIONS = {
@@ -56,6 +59,7 @@ SOURCE_LANGUAGE_OPTIONS = {
     "Deutsch": "de",
     "Auto": "auto",
 }
+'''소스 언어 룩업테이블'''
 
 # Global translation configuration
 TRANSLATOR_CONFIG = {
@@ -76,9 +80,9 @@ TRANSLATOR_CONFIG = {
 def parse_args():
     parser = argparse.ArgumentParser(description='PDF Translator Application')
     parser.add_argument(
-        '--translator', 
-        type=str, 
-        choices=['google', 'openai'], 
+        '--translator',
+        type=str,
+        choices=['google', 'openai'],
         default='google',
         help='Specify translator type: google or openai'
     )
@@ -102,9 +106,9 @@ def parse_args():
 # Update TRANSLATOR_CONFIG based on command line arguments
 def update_translator_config(args):
     global TRANSLATOR_CONFIG
-    
+
     TRANSLATOR_CONFIG["type"] = "Google" if args.translator.lower() == "google" else "OpenAI"
-    
+
     if args.translator.lower() == "google":
         if args.api_base:
             TRANSLATOR_CONFIG["google"]["default_api_base"] = args.api_base
@@ -146,30 +150,37 @@ def save_translation_cache(doc: pymupdf.Document, cache_key: str):
     cache_path = get_cache_dir() / cache_key
     doc.save(str(cache_path))  # 确保提供文件路径字符串
 
-def translate_pdf_pages(doc, doc_bytes, start_page, num_pages, translator, text_color, translator_name, target_lang):
-    """Translate specific pages of a PDF document with progress and caching"""
+def translate_pdf_pages( doc: Document, doc_bytes: bytes,
+                         start_page, num_pages,
+                         translator,
+                         text_color,
+                         translator_name,
+                         target_lang ):
+    """
+        Translate specific pages of a PDF document with progress and caching
+        """
     # Log translator information
-    logging.info(f"Using translator: {translator_name}, source: {translator._source}, target: {translator._target}")
-    logging.info(f"Selected translator: {translator_name}, Class: {translator.__class__.__name__}")
-    
+    logging.info( f"Using translator: {translator_name}, source: {translator._source}, target: {translator._target}")
+    logging.info( f"Selected translator: {translator_name}, Class: {translator.__class__.__name__}")
+
     WHITE = pymupdf.pdfcolor["white"]
     rgb_color = COLOR_MAP.get(text_color.lower(), COLOR_MAP["darkred"])
-    
+
     translated_pages = []
     total_pages = min(start_page + num_pages, doc.page_count) - start_page
     cache_hits = 0
-    
+
     # Create a progress bar
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     for i, page_num in enumerate(range(start_page, min(start_page + num_pages, doc.page_count))):
         status_text.text(f"Translating page {page_num + 1}...")
-        
+
         # Extract text content for cache key
         page = doc[page_num]
         text_content = page.get_text("text")
-        
+
         # Check cache first using text content
         cache_key = get_cache_key(
             doc.metadata,
@@ -178,9 +189,9 @@ def translate_pdf_pages(doc, doc_bytes, start_page, num_pages, translator, text_
             target_lang,
             text_content
         )
-        
+
         cached_doc = get_cached_translation(cache_key)
-        
+
         if cached_doc is not None:
             translated_pages.append(cached_doc)
             cache_hits += 1
@@ -189,21 +200,21 @@ def translate_pdf_pages(doc, doc_bytes, start_page, num_pages, translator, text_
         else:
             logging.info(f"Cache miss: Translating page {page_num + 1}")
             status_text.text(f"Translating page {page_num + 1} (not in cache)")
-            
+
             # Create a new PDF document for this page
             new_doc = pymupdf.open()
             new_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
             page = new_doc[0]
-            
+
             # Extract and translate text blocks
             blocks = page.get_text("blocks", flags=pymupdf.TEXT_DEHYPHENATE)
-            
+
             for block in blocks:
                 bbox = block[:4]
                 text = block[4]
                 translated = translator.translate(text)
                 translated = str(translated)  # Ensure the value is a string
-                
+
                 # Cover original text with white and add translation in color
                 page.draw_rect(bbox, color=None, fill=WHITE)
                 page.insert_htmlbox(
@@ -211,36 +222,36 @@ def translate_pdf_pages(doc, doc_bytes, start_page, num_pages, translator, text_
                     translated,
                     css=f"* {{font-family: sans-serif; color: rgb({int(rgb_color[0]*255)}, {int(rgb_color[1]*255)}, {int(rgb_color[2]*255)});}}"
                 )
-            
+
             # Save to cache
             save_translation_cache(new_doc, cache_key)
             translated_pages.append(new_doc)
             logging.info(f"Cached new translation for page {page_num + 1}")
-        
+
         # Update progress
         progress = (i + 1) / total_pages
         progress_bar.progress(progress)
-    
+
     # Clear progress indicators and show summary
     progress_bar.empty()
     if cache_hits > 0:
         st.info(f"Used cache for {cache_hits} out of {total_pages} pages")
-    
+
     return translated_pages
 
-def get_page_image(page, scale=2):
+def get_page_image( page: Page, scale=2) -> Pixmap:
     """Get high quality image from PDF page"""
     # 计算缩放后的尺寸
     zoom = scale
     mat = pymupdf.Matrix(zoom, zoom)
-    
+
     # 使用较低分辨率渲染页面，但保持清晰度
-    pix = page.get_pixmap(
+    pix: Pixmap = page.get_pixmap(
         matrix=mat,
         alpha=False,
         colorspace="rgb",  # Use RGB instead of RGBA
     )
-    
+
     return pix
 
 def translate_all_pages(
@@ -255,16 +266,16 @@ def translate_all_pages(
     # Log translator information for full document translation
     logging.info(f"Starting full document translation with: {kwargs.get('translator_name', 'unknown')}")
     logging.info(f"Translator settings - source: {translator._source}, target: {translator._target}")
-    
+
     # Define colors
     WHITE = pymupdf.pdfcolor["white"]
     rgb_color = COLOR_MAP.get(kwargs.get('text_color', 'darkred').lower(), COLOR_MAP["darkred"])
-    
+
     total_pages = input_doc.page_count
-    
+
     # Create a progress bar for overall progress
     status_text = st.empty()
-    
+
     # Translate all pages using translate_pdf_pages
     translated_pages = translate_pdf_pages(
         input_doc,
@@ -276,12 +287,12 @@ def translate_all_pages(
         kwargs.get('translator_name', 'google'),
         kwargs.get('target_lang', 'zh-CN')
     )
-    
+
     # Combine all pages into one PDF with compression
     output_path = kwargs.get('output_path', 'output.pdf')
     for trans_doc in translated_pages:
         output_doc.insert_pdf(trans_doc)
-    
+
     # Save with compression options
     output_doc.save(
         output_path,
@@ -290,7 +301,7 @@ def translate_all_pages(
         clean=True,
         linear=True
     )
-    
+
     return output_doc
 
 def init_session_state():
@@ -309,20 +320,20 @@ def init_session_state():
         st.session_state.api_settings = {}
 
 def main():
-    st.set_page_config(layout="wide", page_title="PDF Translator for Human")
-    st.title("PDF Translator for Human")
+    st.set_page_config( layout="wide", page_title="PDF Translator for Human" ) # 웹페이지 전체 영역 사용
+    st.title( "PDF Translator for Human to Korean" ) # H1
 
     # Initialize session state
     init_session_state()
 
     # Sidebar configuration
     with st.sidebar:
-        st.header("Settings")
-        
+        st.header( "Settings" )
+
         uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
-        
+
         # Reset session state when a new file is uploaded
-        if uploaded_file is not None and (st.session_state.previous_file is None or 
+        if uploaded_file is not None and (st.session_state.previous_file is None or
                                         uploaded_file.name != st.session_state.previous_file):
             st.session_state.current_page = 0
             st.session_state.translation_started = True
@@ -330,7 +341,7 @@ def main():
             st.session_state.translated_doc = None
             st.session_state.previous_file = uploaded_file.name
             st.rerun()
-            
+
         # Add source language selection
         source_lang_name = st.selectbox(
             "Source Language",
@@ -338,27 +349,27 @@ def main():
             index=0  # Default to English
         )
         source_lang = SOURCE_LANGUAGE_OPTIONS[source_lang_name]
-        
+
         pages_per_load = st.number_input(
             "Pages per load",
             min_value=1,
             max_value=5,
             value=DEFAULT_PAGES_PER_LOAD
         )
-        
+
         text_color = st.selectbox(
             "Translation Color",
             options=list(COLOR_MAP.keys()),
             index=0
         )
-        
+
         target_lang = st.selectbox(
             "Target Language",
             options=list(LANGUAGE_OPTIONS.keys()),
-            index=0
+            index=4
         )
         target_lang_code = LANGUAGE_OPTIONS[target_lang]
-        
+
         # Add translator selection
         st.subheader("Translator Settings")
         translator_type = st.radio(
@@ -366,7 +377,7 @@ def main():
             options=["Google", "OpenAI Compatible"],
             index=0 if TRANSLATOR_CONFIG["type"] == "Google" else 1
         )
-        
+
         # API Configuration based on translator selection
         if translator_type == "OpenAI Compatible":
             api_key = st.text_input(
@@ -382,7 +393,7 @@ def main():
                 "Model Name",
                 value=TRANSLATOR_CONFIG["openai"]["default_model"]
             )
-            
+
             # Store API settings
             st.session_state.api_settings.update({
                 'api_key': api_key,
@@ -398,24 +409,24 @@ def main():
     # Main content area
     if uploaded_file is not None:
         doc_bytes = uploaded_file.read()
-        doc = pymupdf.open(stream=doc_bytes)
-        
+        doc = pymupdf.open( stream=doc_bytes )
+
         # Create two columns for side-by-side display
         col1, col2 = st.columns(2)
-        
+
         # Display original pages
         with col1:
             st.header("Original")
-            for page_num in range(st.session_state.current_page,
-                                min(st.session_state.current_page + pages_per_load, doc.page_count)):
+            for page_num in range( st.session_state.current_page,
+                                min( st.session_state.current_page + pages_per_load, doc.page_count ) ):
                 page = doc[page_num]
-                pix = get_page_image(page)
-                st.image(pix.tobytes(), caption=f"Page {page_num + 1}", use_container_width=True)
-        
+                pix = get_page_image( page )
+                st.image( pix.tobytes(), caption=f"Page { page_num + 1 }", use_container_width=True )
+
         # Translation column
         with col2:
             st.header("Translated")
-            
+
             try:
                 # Initialize translator based on user selection
                 if translator_type == "Google":
@@ -443,13 +454,13 @@ def main():
                     translator_type,
                     target_lang_code
                 )
-                
+
                 # Display translated pages
-                for i, trans_doc in enumerate(translated_pages):
+                for i, trans_doc in enumerate( translated_pages ):
                     page = trans_doc[0]
                     pix = get_page_image(page)
-                    st.image(pix.tobytes(), caption=f"Page {st.session_state.current_page + i + 1}", use_container_width=True)
-            
+                    st.image( pix.tobytes(), caption=f"Page {st.session_state.current_page + i + 1}", use_container_width=True )
+
             except Exception as e:
                 st.error(f"Translation error: {str(e)}")
                 logging.error(f"Translation error: {str(e)}")
@@ -458,16 +469,16 @@ def main():
         # Navigation and action buttons
         st.markdown("---")  # Add a separator
         button_col1, button_col2, button_col3, button_col4 = st.columns(4)
-        
+
         # Previous Pages button
         with button_col1:
             if st.session_state.current_page > 0:
-                if st.button("Previous Pages", use_container_width=True):
-                    st.session_state.current_page = max(0, st.session_state.current_page - pages_per_load)
+                if st.button( "Previous Pages", use_container_width=True ):
+                    st.session_state.current_page = max( 0, st.session_state.current_page - pages_per_load )
                     st.rerun()
             else:
-                st.button("Previous Pages", disabled=True, use_container_width=True)
-        
+                st.button( "Previous Pages", disabled=True, use_container_width=True )
+
         # Next Pages button
         with button_col2:
             if st.session_state.current_page + pages_per_load < doc.page_count:
@@ -479,10 +490,10 @@ def main():
                     st.rerun()
             else:
                 st.button("Next Pages", disabled=True, use_container_width=True)
-        
+
         # Translate All button
         with button_col3:
-            if st.button("Translate All", 
+            if st.button("Translate All",
                         disabled=st.session_state.all_translated,
                         use_container_width=True):
                 try:
@@ -515,7 +526,7 @@ def main():
                         target_lang=target_lang_code,
                         output_path=output_path
                     )
-                    
+
                     st.session_state.all_translated = True
                     st.session_state.translated_doc = output_path
                     st.rerun()
@@ -523,7 +534,7 @@ def main():
                     st.error(f"Translation error: {str(e)}")
                     logging.error(f"Translation error: {str(e)}")
                     return
-        
+
         # Download button
         with button_col4:
             if not st.session_state.all_translated:
@@ -564,4 +575,4 @@ def main():
 if __name__ == "__main__":
     args = parse_args()
     update_translator_config(args)
-    main() 
+    main()
